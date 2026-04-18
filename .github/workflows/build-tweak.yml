@@ -37,7 +37,8 @@ jobs:
         git clone --recursive https://github.com/theos/theos.git $THEOS
         rm -rf $THEOS/sdks
         git clone https://github.com/theos/sdks.git $THEOS/sdks
-
+        # 额外下载一些非越狱环境需要的依赖（如果编译报错才加这行）
+        # curl -L https://github.com/theos/lib/raw/master/libsubstrate.a -o $THEOS/vendor/lib/libsubstrate.a
     - name: 🏭 编译项目
       run: |
         echo "开始编译 Tweak..."
