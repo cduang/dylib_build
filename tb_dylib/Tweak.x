@@ -1,46 +1,57 @@
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
 
-// 提取链接的逻辑保持不变
-static NSString *extractPureLink(NSString *input) {
-    if (![input isKindOfClass:[NSString class]] || input.length == 0) return input;
-    if (!([input containsString:@"tb.cn"] || [input containsString:@"taobao.com"])) return input;
+// 提取链接的逻辑
+static NSString *extractPureLink(id input) {
+    if (![input isKindOfClass:[NSString class]]) return input;
+    NSString *str = (NSString *)input;
+    if (!([str containsString:@"tb.cn"] || [str containsString:@"taobao.com"])) return str;
 
     NSError *error = nil;
     NSDataDetector *detector = [NSDataDetector dataDetectorWithTypes:NSTextCheckingTypeLink error:&error];
-    NSTextCheckingResult *match = [detector firstMatchInString:input options:0 range:NSMakeRange(0, input.length)];
+    NSTextCheckingResult *match = [detector firstMatchInString:str options:0 range:NSMakeRange(0, str.length)];
     
     if (match && match.URL) {
         NSString *url = match.URL.absoluteString;
         return [url componentsSeparatedByString:@"?"].firstObject;
     }
-    return input;
+    return str;
 }
 
-// 原生 Swizzling 函数，不依赖 CydiaSubstrate
-void swizzleMethod(Class class, SEL originalSelector, SEL swizzledSelector) {
-    Method originalMethod = class_getInstanceMethod(class, originalSelector);
-    Method swizzledMethod = class_getInstanceMethod(class, swizzledSelector);
-    method_exchangeImplementations(originalMethod, swizzledMethod);
+// 执行 Hook 的工具函数
+void swizzle(Class cls, SEL origSel, SEL newSel) {
+    Method origMethod = class_getInstanceMethod(cls, origSel);
+    Method newMethod = class_getInstanceMethod(cls, newSel);
+    method_exchangeImplementations(origMethod, newMethod);
 }
 
-@interface UIPasteboard (Clean)
+// 定义一个分类来存放我们的新逻辑
+@implementation UIPasteboard (TaobaoHook)
+
+- (void)hook_setString:(NSString *)string {
+    // 这里的 [self hook_setString:] 实际上是调用原生的 setString:
+    [self hook_setString:extractPureLink(string)];
+}
+
+- (void)hook_setObjects:(NSArray *)objects {
+    NSMutableArray *newObjects = [NSMutableArray array];
+    for (id obj in objects) {
+        [newObjects addObject:extractPureLink(obj)];
+    }
+    [self hook_setObjects:newObjects];
+}
+
 @end
 
-@implementation UIPasteboard (Clean)
-// 我们的新方法
-- (void)my_setString:(NSString *)string {
-    [self my_setString:extractPureLink(string)];
-}
-@end
-
-// 插件加载入口
-%ctor {
+// 插件加载点：不需要 %hook 关键字
+__attribute__((constructor)) static void init() {
     @autoreleasepool {
-        // 使用原生运行时交换方法
-        swizzleMethod([UIPasteboard class], @selector(setString:), @selector(my_setString:));
+        Class cls = [UIPasteboard class];
+        // 交换 setString:
+        swizzle(cls, @selector(setString:), @selector(hook_setString:));
+        // 交换 setObjects: (淘宝 2026 年常用的方法)
+        swizzle(cls, @selector(setObjects:), @selector(hook_setObjects:));
         
-        // 如果想拦截更多，可以照葫芦画瓢交换 setObjects: 等
-        NSLog(@"[TaobaoCleanShare] 插件已加载，原生 Hook 已生效");
+        NSLog(@"[TaobaoCleanShare] 纯原生 Hook 已加载，无需 Substrate");
     }
 }
