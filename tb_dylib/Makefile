@@ -1,12 +1,11 @@
 TARGET := iphone:clang:latest:14.0
 ARCHS = arm64 arm64e
 
-# 【关键：静态链接 Hook 引擎】
+# 【核心修改 1】强制静态链接 Substrate
+MS_STRICT = 1
+# 【核心修改 2】关闭调试，确保 FINAL 模式
 DEBUG = 0
 FINALPACKAGE = 1
-# 这一行告诉 Theos 不要寻找系统的 Substrate
-# 如果你的 Theos 环境支持，建议直接使用以下配置
-TaobaoCleanShare_LDFLAGS = -undefined dynamic_lookup
 
 include $(THEOS)/makefiles/common.mk
 
