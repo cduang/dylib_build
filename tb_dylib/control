@@ -2,7 +2,8 @@ Package: com.yourname.taobaocleanshare
 Name: TaobaoCleanShare
 Depends: mobilesubstrate
 Version: 1.0.0
-Architecture: iphoneos-arm
+Architecture: iphoneos-arm64
+
 Description: 淘宝链接净化插件，移除分享链接中的跟踪参数。
 Maintainer: YourName
 Author: YourName
