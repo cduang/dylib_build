@@ -1,11 +1,12 @@
-# 明确指定目标为 iOS
 TARGET := iphone:clang:latest:14.0
-
-# 明确指定架构（必须包含 arm64，建议带上 arm64e）
 ARCHS = arm64 arm64e
 
-# 确保编译为最终发布版本，移除多余调试符号
+# 【关键：静态链接 Hook 引擎】
+DEBUG = 0
 FINALPACKAGE = 1
+# 这一行告诉 Theos 不要寻找系统的 Substrate
+# 如果你的 Theos 环境支持，建议直接使用以下配置
+TaobaoCleanShare_LDFLAGS = -undefined dynamic_lookup
 
 include $(THEOS)/makefiles/common.mk
 
