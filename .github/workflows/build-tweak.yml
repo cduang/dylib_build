@@ -22,13 +22,14 @@ jobs:
     
     steps:
     - name: 检出代码
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
       with:
         fetch-depth: 0
     
     - name: 🛠️ 安装依赖工具 (dpkg & ldid)
       run: |
         brew install dpkg ldid
+        # 确认工具可用
         which dpkg-deb
         which ldid
 
@@ -36,44 +37,58 @@ jobs:
       run: |
         echo "正在初始化 Theos..."
         git clone --recursive https://github.com/theos/theos.git $THEOS
+        
+        echo "清理并安装 SDK..."
+        # 修复目录冲突问题
         rm -rf $THEOS/sdks
-        echo "正在下载 iOS SDKs..."
         git clone https://github.com/theos/sdks.git $THEOS/sdks
 
     - name: 🏭 编译项目
       run: |
         echo "开始编译 Tweak..."
         
-        # 切换到插件所在的子目录
+        # 进入项目目录
         cd tb_dylib
         
-        # 检查 control 文件是否存在
+        # 1. 检查必要文件
         if [ ! -f "control" ]; then
-          echo "❌ 错误: 在 tb_dylib 目录下找不到 control 文件！"
+          echo "❌ 错误: 缺少 control 文件，请创建它！"
           exit 1
         fi
         
-        # 使用 Theos 进行打包
-        make package FINALPACKAGE=1 THEOS=$THEOS
+        # 2. 注入环境变量，强制指定 iOS 架构
+        # 这步是解决 "Unsupported Mach-O type" 的核心
+        export ARCHS="arm64 arm64e"
+        export TARGET="iphone:clang:latest:14.0"
+        export FINALPACKAGE=1
         
-        # 记录构建时间
-        BUILD_DATE=$(date +'%Y%m%d')
-        BUILD_TIME=$(date +'%H%M%S')
+        # 执行编译
+        make package THEOS=$THEOS
         
-        # 获取生成的产物路径
+        # 3. 寻找生成的产物
         DEB_FILE=$(find packages -name "*.deb" | head -n 1)
         DYLIB_FILE=$(find .theos/obj -name "TaobaoCleanShare.dylib" | head -n 1)
         
-        if [ -z "$DEB_FILE" ]; then 
-          echo "❌ 错误: 未能生成 DEB 安装包！"
+        if [ -z "$DYLIB_FILE" ]; then
+          echo "❌ 错误: 未能生成 dylib 文件！"
           exit 1
         fi
+
+        # 4. 【核心修复】在服务器端预先修复 dylib 的签名
+        echo "正在修复 Mach-O 头部信息..."
+        ldid -S "$DYLIB_FILE"
         
-        # 导出路径给后续步骤使用
+        # 5. 记录构建信息
+        BUILD_DATE=$(date +'%Y%m%d')
+        BUILD_TIME=$(date +'%H%M%S')
+        
+        # 导出路径给后续步骤
         echo "DEB_PATH=tb_dylib/$DEB_FILE" >> $GITHUB_ENV
         echo "DYLIB_PATH=tb_dylib/$DYLIB_FILE" >> $GITHUB_ENV
         echo "BUILD_DATE=$BUILD_DATE" >> $GITHUB_ENV
         echo "BUILD_TIME=$BUILD_TIME" >> $GITHUB_ENV
+        
+        echo "✅ 编译成功: $DYLIB_FILE"
 
     - name: ⬆️ 上传构建产物 (Artifacts)
       uses: actions/upload-artifact@v4
@@ -97,10 +112,11 @@ jobs:
         body: |
           ## 📦 自动构建完成
           - **构建日期**: `${{ env.BUILD_DATE }}`
-          - **构建时间**: `${{ env.BUILD_TIME }}`
+          - **版本**: `${{ github.event.inputs.version }}`
           
-          ### 📱 文件说明
-          1. **.deb**: 适用于越狱设备（Dopamine/Palera1n 等）。
-          2. **.dylib**: 适用于非越狱设备注入（通过轻松签/Sideloadly 注入 IPA）。
+          ### 📱 注入说明 (TrollStore / 巨魔用户)
+          - 请下载 **.dylib** 文件。
+          - 使用 **TrollFools** 或 **巨魔自带注入器** 注入到淘宝 IPA。
+          - 本次构建已通过 `ldid` 预修复架构头信息，兼容 `arm64/arm64e`。
         draft: false
         prerelease: false
