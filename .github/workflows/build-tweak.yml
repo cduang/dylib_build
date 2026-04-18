@@ -43,6 +43,10 @@ jobs:
         echo "正在克隆 Theos 核心..."
         git clone --recursive https://github.com/theos/theos.git $THEOS
         
+        echo "清理默认的 sdks 目录..."
+        # 【修改点】删除 Theos 自带的 sdks 目录，防止 clone 报错
+        rm -rf $THEOS/sdks
+        
         echo "正在克隆 iOS SDKs..."
         # 获取修补过的 iOS SDK，这是 Theos 编译所必须的
         git clone https://github.com/theos/sdks.git $THEOS/sdks
@@ -54,7 +58,7 @@ jobs:
       run: |
         echo "开始编译 Tweak..."
         
-        # 【修改点】进入包含 Makefile 的子目录
+        # 进入包含 Makefile 的子目录
         cd tb_dylib
         
         # 使用 Theos 的 make 指令进行打包 (FINALPACKAGE=1 开启 Release 优化，移除 Debug 符号)
@@ -68,7 +72,7 @@ jobs:
         DEB_FILE=$(ls packages/*.deb | head -n 1)
         DYLIB_FILE=$(ls .theos/obj/*/TaobaoCleanShare.dylib .theos/obj/TaobaoCleanShare.dylib 2>/dev/null | head -n 1)
         
-        # 【修改点】因为我们 cd 进去了，给环境变量赋值时需要拼上前缀路径 tb_dylib/，以便后续步骤在根目录下能找到文件
+        # 给环境变量赋值时需要拼上前缀路径 tb_dylib/，以便后续步骤在根目录下能找到文件
         echo "DEB_PATH=tb_dylib/$DEB_FILE" >> $GITHUB_ENV
         echo "DYLIB_PATH=tb_dylib/$DYLIB_FILE" >> $GITHUB_ENV
         echo "BUILD_DATE=$BUILD_DATE" >> $GITHUB_ENV
