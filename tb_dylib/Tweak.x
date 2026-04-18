@@ -1,88 +1,126 @@
 #import <UIKit/UIKit.h>
 
 // ----------------------------------------------------
-// 辅助函数：提取文本中的纯 URL
+// 核心逻辑：从淘宝乱七八糟的文案中提取纯净链接
 // ----------------------------------------------------
-static NSString *cleanTaobaoString(NSString *originalString) {
-    if (!originalString || ![originalString isKindOfClass:[NSString class]]) return originalString;
+static NSString *extractPureTaobaoLink(NSString *input) {
+    if (!input || ![input isKindOfClass:[NSString class]]) return input;
     
-    // 只有包含淘宝相关特征的文案才处理
-    if (!([originalString containsString:@"【淘宝】"] || 
-          [originalString containsString:@"tb.cn"] || 
-          [originalString containsString:@"taobao.com"])) {
-        return originalString;
+    // 快速预判：如果不含淘宝特征，直接原样返回，减少性能损耗
+    if (!([input containsString:@"【淘宝】"] || [input containsString:@"tb.cn"] || [input containsString:@"taobao.com"])) {
+        return input;
     }
 
     NSError *error = nil;
     NSDataDetector *detector = [NSDataDetector dataDetectorWithTypes:NSTextCheckingTypeLink error:&error];
-    NSArray<NSTextCheckingResult *> *matches = [detector matchesInString:originalString options:0 range:NSMakeRange(0, originalString.length)];
+    NSArray<NSTextCheckingResult *> *matches = [detector matchesInString:input options:0 range:NSMakeRange(0, input.length)];
     
     for (NSTextCheckingResult *match in matches) {
         if (match.URL) {
             NSString *urlStr = match.URL.absoluteString;
-            // 进一步去掉淘宝链接后的打点追踪参数 (如 ?tk=xxx)
+            // 净化：去掉 ?tk=... 等追踪参数
             if ([urlStr containsString:@"?"]) {
-                NSArray *parts = [urlStr componentsSeparatedByString:@"?"];
-                return parts[0];
+                urlStr = [[urlStr componentsSeparatedByString:@"?"] firstObject];
+            }
+            // 净化：去掉短链接最后的斜杠
+            if ([urlStr hasSuffix:@"/"]) {
+                urlStr = [urlStr substringToIndex:urlStr.length - 1];
             }
             return urlStr;
         }
     }
-    return originalString;
+    return input;
 }
 
 // ----------------------------------------------------
-// 1. 深度拦截剪贴板 (涵盖淘宝常用的多种写入方式)
+// 拦截 UIPasteboard 的所有写入方式
 // ----------------------------------------------------
 %hook UIPasteboard
 
-// 拦截最基础的 setString
+// 1. 基础写入
 - (void)setString:(NSString *)string {
-    %orig(cleanTaobaoString(string));
+    %orig(extractPureTaobaoLink(string));
 }
 
-// 拦截现代 App 常用的 setValue:forPasteboardType:
-- (void)setValue:(id)value forPasteboardType:(NSString *)pasteboardType {
-    if ([value isKindOfClass:[NSString class]]) {
-        value = cleanTaobaoString((NSString *)value);
-    }
-    %orig(value, pasteboardType);
-}
-
-// 拦截批量写入 setItems:
+// 2. 批量写入 (淘宝经常用这个)
 - (void)setItems:(NSArray<NSDictionary<NSString *,id> *> *)items {
-    NSMutableArray *newItems = [items mutableCopy];
-    for (NSUInteger i = 0; i < newItems.count; i++) {
-        NSMutableDictionary *dict = [newItems[i] mutableCopy];
-        // 遍历字典，处理所有可能的文本类型
+    NSMutableArray *newItems = [NSMutableArray array];
+    for (NSDictionary *dict in items) {
+        NSMutableDictionary *newDict = [dict mutableCopy];
         for (NSString *key in dict.allKeys) {
             if ([dict[key] isKindOfClass:[NSString class]]) {
-                dict[key] = cleanTaobaoString(dict[key]);
+                newDict[key] = extractPureTaobaoLink(dict[key]);
             }
         }
-        newItems[i] = dict;
+        [newItems addObject:newDict];
     }
     %orig(newItems);
+}
+
+// 3. 带选项的批量写入
+- (void)setItems:(NSArray<NSDictionary<NSString *,id> *> *)items options:(NSDictionary<UIPasteboardOption,id> *)options {
+    NSMutableArray *newItems = [NSMutableArray array];
+    for (NSDictionary *dict in items) {
+        NSMutableDictionary *newDict = [dict mutableCopy];
+        for (NSString *key in dict.allKeys) {
+            if ([dict[key] isKindOfClass:[NSString class]]) {
+                newDict[key] = extractPureTaobaoLink(dict[key]);
+            }
+        }
+        [newItems addObject:newDict];
+    }
+    %orig(newItems, options);
+}
+
+// 4. 对象写入 (iOS 10+ 常用)
+- (void)setObjects:(NSArray<id<NSItemProviderWriting>> *)objects {
+    NSMutableArray *newObjects = [NSMutableArray array];
+    for (id obj in objects) {
+        if ([obj isKindOfClass:[NSString class]]) {
+            [newObjects addObject:extractPureTaobaoLink((NSString *)obj)];
+        } else {
+            [newObjects addObject:obj];
+        }
+    }
+    %orig(newObjects);
+}
+
+// 5. 带选项的对象写入
+- (void)setObjects:(NSArray<id<NSItemProviderWriting>> *)objects options:(NSDictionary<UIPasteboardOption,id> *)options {
+    NSMutableArray *newObjects = [NSMutableArray array];
+    for (id obj in objects) {
+        if ([obj isKindOfClass:[NSString class]]) {
+            [newObjects addObject:extractPureTaobaoLink((NSString *)obj)];
+        } else {
+            [newObjects addObject:obj];
+        }
+    }
+    %orig(newObjects, options);
+}
+
+// 6. 指定类型的写入
+- (void)setValue:(id)value forPasteboardType:(NSString *)pasteboardType {
+    if ([value isKindOfClass:[NSString class]]) {
+        value = extractPureTaobaoLink((NSString *)value);
+    }
+    %orig(value, pasteboardType);
 }
 
 %end
 
 // ----------------------------------------------------
-// 2. 拦截系统分享面板
+// 额外拦截：分享面板 (双重保险)
 // ----------------------------------------------------
 %hook UIActivityViewController
-
 - (instancetype)initWithActivityItems:(NSArray *)activityItems applicationActivities:(NSArray *)applicationActivities {
-    NSMutableArray *modifiedItems = [NSMutableArray arrayWithCapacity:activityItems.count];
-    
+    NSMutableArray *newItems = [NSMutableArray array];
     for (id item in activityItems) {
         if ([item isKindOfClass:[NSString class]]) {
-            [modifiedItems addObject:cleanTaobaoString((NSString *)item)];
+            [newItems addObject:extractPureTaobaoLink((NSString *)item)];
         } else {
-            [modifiedItems addObject:item];
+            [newItems addObject:item];
         }
     }
-    return %orig(modifiedItems, applicationActivities);
+    return %orig(newItems, applicationActivities);
 }
-
 %end
