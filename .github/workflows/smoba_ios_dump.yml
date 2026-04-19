@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: '版本号 (例如: 1.0.0)'
+        description: '版本号 (例如: 1.0.0 / auto)'
         required: true
         default: 'auto'
 
@@ -17,43 +17,37 @@ env:
 
 jobs:
   build:
-    name: 🏗️ 编译 IOS Il2CppDumper
     runs-on: macos-latest
 
     steps:
-    - name: 📥 检出代码
+    - name: 📥 Checkout
       uses: actions/checkout@v4
       with:
         fetch-depth: 0
 
-    - name: 🛠️ 安装依赖
+    - name: 🛠️ Install dependencies
       run: |
         brew install dpkg ldid
 
-    - name: 📦 安装 Theos
+    - name: 📦 Install Theos
       run: |
         git clone --recursive https://github.com/theos/theos.git $THEOS
         rm -rf $THEOS/sdks
         git clone https://github.com/theos/sdks.git $THEOS/sdks
 
-    - name: 🧠 设置环境变量
-      run: |
-        echo "THEOS=$THEOS" >> $GITHUB_ENV
-        echo "FINALPACKAGE=1" >> $GITHUB_ENV
-
-    - name: ✏️ 修改 Bundle ID
+    - name: ✏️ Modify Bundle ID
       run: |
         PLIST="IOSIl2CppDumper.plist"
 
         /usr/libexec/PlistBuddy -c "Set :Filter:Bundles:0 com.tencent.smoba" "$PLIST" \
         || sed -i '' 's/com.kiloo.subwaysurfers/com.tencent.smoba/g' "$PLIST"
 
-        echo "===== 修改后 plist ====="
+        echo "=== plist ==="
         cat "$PLIST"
 
-    - name: 🏭 编译项目（稳定版）
+    - name: 🏗️ Build (stable)
       run: |
-        echo "开始编译..."
+        set -e
 
         cd tb_dylib || cd .
 
@@ -64,54 +58,58 @@ jobs:
         make clean || true
         make FINALPACKAGE=1 THEOS=$THEOS
 
-        BUILD_DATE=$(date +'%Y%m%d')
-        BUILD_TIME=$(date +'%H%M%S')
+        echo "=== build finished ==="
 
-        # ========== 找 dylib ==========
-        DYLIB_PATH=$(find .theos/obj -name "*.dylib" | head -n 1)
+        # 🔥 找 dylib（绝对路径）
+        DYLIB_PATH=$(find "$(pwd)/.theos" -type f -name "*.dylib" | head -n 1)
 
         if [ -z "$DYLIB_PATH" ]; then
-          echo "❌ 没找到 dylib"
+          echo "❌ dylib not found"
+          find .theos || true
           exit 1
         fi
 
-        echo "找到 dylib: $DYLIB_PATH"
+        echo "✔ DYLIB: $DYLIB_PATH"
 
-        # ========== 找 deb（可选） ==========
-        DEB_PATH=$(find packages -name "*.deb" 2>/dev/null | head -n 1 || true)
+        # 可选 deb（有就用，没有也不报错）
+        DEB_PATH=$(find "$(pwd)/packages" -name "*.deb" 2>/dev/null | head -n 1 || true)
 
-        echo "DEB_PATH=$DEB_PATH" >> $GITHUB_ENV
+        echo "✔ DEB: $DEB_PATH"
+
         echo "DYLIB_PATH=$DYLIB_PATH" >> $GITHUB_ENV
-        echo "BUILD_DATE=$BUILD_DATE" >> $GITHUB_ENV
+        echo "DEB_PATH=$DEB_PATH" >> $GITHUB_ENV
 
-    - name: 📦 上传产物
+    - name: 📦 Upload artifacts (always safe)
       uses: actions/upload-artifact@v4
       with:
-        name: IOSIl2CppDumper-build
+        name: build-output
         path: |
           ${{ env.DYLIB_PATH }}
           ${{ env.DEB_PATH }}
-        retention-days: 5
+        if-no-files-found: error
 
-    - name: 🚀 发布 Release
+    - name: 🚀 Create Release
       uses: softprops/action-gh-release@v1
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
-        tag_name: ${{ github.event.inputs.version == 'auto' && format('v{0}', env.BUILD_DATE) || format('v{0}', github.event.inputs.version) }}
-        name: IOS Il2CppDumper ${{ env.BUILD_DATE }}
+        tag_name: ${{ github.event.inputs.version == 'auto' && format('v{0}', github.run_number) || github.event.inputs.version }}
+        name: IOS Il2CppDumper Build ${{ github.run_number }}
         files: |
           ${{ env.DYLIB_PATH }}
           ${{ env.DEB_PATH }}
         body: |
-          ## 📦 构建成功
+          ## 📦 Build Success
 
           - Bundle ID: com.tencent.smoba
-          - 架构: arm64 / arm64e
-          - 构建时间: ${{ env.BUILD_DATE }}
+          - Arch: arm64 / arm64e
+          - Build: ${{ github.run_number }}
 
-          ### 📌 使用说明
-          - dylib: TrollFools / 注入工具
-          - deb: 越狱设备安装（如存在）
+          ### 📌 Files
+          - dylib: injection file
+          - deb: (if generated)
+
+          ### ⚠️ Notes
+          If deb is empty, only dylib is used.
         draft: false
         prerelease: false
