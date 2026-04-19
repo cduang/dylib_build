@@ -1,0 +1,110 @@
+name: 🚀 构建并发布 IOS Il2CppDumper
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '版本号 (例如: 1.0.0)'
+        required: true
+        default: 'auto'
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  THEOS: ${{ github.workspace }}/theos
+
+jobs:
+  build:
+    name: 🏗️ 编译 IOS Il2CppDumper
+    runs-on: macos-latest
+
+    steps:
+    - name: 📥 检出代码
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: 🛠️ 安装依赖工具 (dpkg & ldid)
+      run: |
+        brew install dpkg ldid
+        which dpkg-deb
+        which ldid
+
+    - name: 📦 安装 Theos + iPhoneOS SDK
+      run: |
+        git clone --recursive https://github.com/theos/theos.git $THEOS
+        rm -rf $THEOS/sdks
+        git clone https://github.com/theos/sdks.git $THEOS/sdks
+
+    - name: ✏️ 修改 Bundle ID (plist 注入)
+      run: |
+        echo "修改 bundle id..."
+        
+        PLIST="IOSIl2CppDumper.plist"
+
+        /usr/libexec/PlistBuddy -c "Set :Filter:Bundles:0 com.tencent.smoba" "$PLIST" || \
+        sed -i '' 's/com.kiloo.subwaysurfers/com.tencent.smoba/g' "$PLIST"
+
+        echo "修改完成:"
+        cat "$PLIST"
+
+    - name: 🏭 编译项目
+      run: |
+        echo "开始编译..."
+
+        export ARCHS="arm64 arm64e"
+        export TARGET="iphone:clang:latest:14.0"
+        export FINALPACKAGE=1
+
+        make package THEOS=$THEOS
+
+        BUILD_DATE=$(date +'%Y%m%d')
+        BUILD_TIME=$(date +'%H%M%S')
+
+        DEB_NAME=$(ls packages/*.deb | head -n 1)
+        DYLIB_RAW=$(find .theos/obj -name "*.dylib" | head -n 1)
+
+        if [ -z "$DYLIB_RAW" ]; then
+          echo "❌ 未找到 dylib"
+          exit 1
+        fi
+
+        echo "DEB_PATH=$DEB_NAME" >> $GITHUB_ENV
+        echo "DYLIB_PATH=$DYLIB_RAW" >> $GITHUB_ENV
+        echo "BUILD_DATE=$BUILD_DATE" >> $GITHUB_ENV
+        echo "BUILD_TIME=$BUILD_TIME" >> $GITHUB_ENV
+
+        echo "✅ 构建完成"
+
+    - name: ⬆️ 上传产物
+      uses: actions/upload-artifact@v4
+      with:
+        name: IOSIl2CppDumper-build
+        path: |
+          ${{ env.DEB_PATH }}
+          ${{ env.DYLIB_PATH }}
+        retention-days: 5
+
+    - name: 🚀 发布 Release
+      uses: softprops/action-gh-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ github.event.inputs.version == 'auto' && format('v{0}', env.BUILD_DATE) || format('v{0}', github.event.inputs.version) }}
+        name: IOS Il2CppDumper ${{ env.BUILD_DATE }}
+        files: |
+          ${{ env.DEB_PATH }}
+          ${{ env.DYLIB_PATH }}
+        body: |
+          ## 📦 构建成功
+          - Bundle ID: `com.tencent.smoba`
+          - 架构: arm64 / arm64e
+          - 日期: ${{ env.BUILD_DATE }}
+
+          ### 📌 使用说明
+          - DEB：越狱设备直接安装
+          - DYLIB：可用于 TrollFools / 注入工具
+        draft: false
+        prerelease: false
