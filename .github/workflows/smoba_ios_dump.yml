@@ -26,65 +26,71 @@ jobs:
       with:
         fetch-depth: 0
 
-    - name: 🛠️ 安装依赖工具 (dpkg & ldid)
+    - name: 🛠️ 安装依赖
       run: |
         brew install dpkg ldid
-        which dpkg-deb
-        which ldid
 
-    - name: 📦 安装 Theos + iPhoneOS SDK
+    - name: 📦 安装 Theos
       run: |
         git clone --recursive https://github.com/theos/theos.git $THEOS
         rm -rf $THEOS/sdks
         git clone https://github.com/theos/sdks.git $THEOS/sdks
 
-    - name: ✏️ 修改 Bundle ID (plist 注入)
+    - name: 🧠 设置环境变量
       run: |
-        echo "修改 bundle id..."
-        
+        echo "THEOS=$THEOS" >> $GITHUB_ENV
+        echo "FINALPACKAGE=1" >> $GITHUB_ENV
+
+    - name: ✏️ 修改 Bundle ID
+      run: |
         PLIST="IOSIl2CppDumper.plist"
 
-        /usr/libexec/PlistBuddy -c "Set :Filter:Bundles:0 com.tencent.smoba" "$PLIST" || \
-        sed -i '' 's/com.kiloo.subwaysurfers/com.tencent.smoba/g' "$PLIST"
+        /usr/libexec/PlistBuddy -c "Set :Filter:Bundles:0 com.tencent.smoba" "$PLIST" \
+        || sed -i '' 's/com.kiloo.subwaysurfers/com.tencent.smoba/g' "$PLIST"
 
-        echo "修改完成:"
+        echo "===== 修改后 plist ====="
         cat "$PLIST"
 
-    - name: 🏭 编译项目
+    - name: 🏭 编译项目（稳定版）
       run: |
         echo "开始编译..."
 
+        cd tb_dylib || cd .
+
         export ARCHS="arm64 arm64e"
-        export TARGET="iphone:clang:latest:14.0"
+        export TARGET="iphone:clang:latest:14.4"
         export FINALPACKAGE=1
 
-        make package THEOS=$THEOS
+        make clean || true
+        make FINALPACKAGE=1 THEOS=$THEOS
 
         BUILD_DATE=$(date +'%Y%m%d')
         BUILD_TIME=$(date +'%H%M%S')
 
-        DEB_NAME=$(ls packages/*.deb | head -n 1)
-        DYLIB_RAW=$(find .theos/obj -name "*.dylib" | head -n 1)
+        # ========== 找 dylib ==========
+        DYLIB_PATH=$(find .theos/obj -name "*.dylib" | head -n 1)
 
-        if [ -z "$DYLIB_RAW" ]; then
-          echo "❌ 未找到 dylib"
+        if [ -z "$DYLIB_PATH" ]; then
+          echo "❌ 没找到 dylib"
           exit 1
         fi
 
-        echo "DEB_PATH=$DEB_NAME" >> $GITHUB_ENV
-        echo "DYLIB_PATH=$DYLIB_RAW" >> $GITHUB_ENV
+        echo "找到 dylib: $DYLIB_PATH"
+
+        # ========== 找 deb（可选） ==========
+        DEB_PATH=$(find packages -name "*.deb" 2>/dev/null | head -n 1 || true)
+
+        echo "DEB_PATH=$DEB_PATH" >> $GITHUB_ENV
+        echo "DYLIB_PATH=$DYLIB_PATH" >> $GITHUB_ENV
         echo "BUILD_DATE=$BUILD_DATE" >> $GITHUB_ENV
-        echo "BUILD_TIME=$BUILD_TIME" >> $GITHUB_ENV
 
-        echo "✅ 构建完成"
-
-    - name: ⬆️ 上传产物
+    - name: 📦 上传产物
       uses: actions/upload-artifact@v4
       with:
         name: IOSIl2CppDumper-build
         path: |
-          ${{ env.DEB_PATH }}
           ${{ env.DYLIB_PATH }}
+          ${{ env.DEB_PATH }}
         retention-days: 5
 
     - name: 🚀 发布 Release
@@ -95,16 +101,17 @@ jobs:
         tag_name: ${{ github.event.inputs.version == 'auto' && format('v{0}', env.BUILD_DATE) || format('v{0}', github.event.inputs.version) }}
         name: IOS Il2CppDumper ${{ env.BUILD_DATE }}
         files: |
-          ${{ env.DEB_PATH }}
           ${{ env.DYLIB_PATH }}
+          ${{ env.DEB_PATH }}
         body: |
           ## 📦 构建成功
-          - Bundle ID: `com.tencent.smoba`
+
+          - Bundle ID: com.tencent.smoba
           - 架构: arm64 / arm64e
-          - 日期: ${{ env.BUILD_DATE }}
+          - 构建时间: ${{ env.BUILD_DATE }}
 
           ### 📌 使用说明
-          - DEB：越狱设备直接安装
-          - DYLIB：可用于 TrollFools / 注入工具
+          - dylib: TrollFools / 注入工具
+          - deb: 越狱设备安装（如存在）
         draft: false
         prerelease: false
